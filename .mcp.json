@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "ait": {
+      "type": "http",
+      "url": "http://127.0.0.1:8000/mcp"
+    },
+    "ols": {
+      "type": "http",
+      "url": "https://www.ebi.ac.uk/ols4/api/mcp"
+    },
+    "nvs": {
+      "command": "poetry",
+      "args": ["run", "python", "nvs_sparql_server.py"],
+      "cwd": "/Users/cory/Code/ait"
+    }
+  }
+}

@@ -165,6 +165,41 @@ def query(
 
 
 @app.command()
+def web(
+    data_dir: Path = typer.Option(
+        Path.home() / ".ait",
+        "--data-dir",
+        "-d",
+        help="Directory for local data storage",
+    ),
+    port: int = typer.Option(
+        8000,
+        "--port",
+        "-p",
+        help="Port to run the web server on",
+    ),
+    host: str = typer.Option(
+        "127.0.0.1",
+        "--host",
+        "-h",
+        help="Host to bind to",
+    ),
+) -> None:
+    """Start the web UI server."""
+    import uvicorn
+
+    from ait.web import app as web_app, configure
+
+    configure(data_dir)
+
+    console.print(f"[bold green]ait[/] v{__version__} web UI", style="dim")
+    console.print(f"Data directory: {data_dir}", style="dim")
+    console.print(f"Starting web server at http://{host}:{port}", style="dim")
+
+    uvicorn.run(web_app, host=host, port=port)
+
+
+@app.command()
 def version() -> None:
     """Show version information."""
     console.print(f"ait v{__version__}")

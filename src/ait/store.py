@@ -78,18 +78,19 @@ class Store:
             List of result bindings as dictionaries.
         """
         results = self._store.query(sparql)
+        variables = [v.value for v in results.variables]
         rows: list[dict[str, str]] = []
         for solution in results:
             row: dict[str, str] = {}
-            for var in solution:
-                value = solution[var]
+            for var_name in variables:
+                value = solution[var_name]
                 if value is not None:
                     if isinstance(value, ox.NamedNode):
-                        row[str(var)] = str(value.value)
+                        row[var_name] = str(value.value)
                     elif isinstance(value, ox.Literal):
-                        row[str(var)] = str(value.value)
+                        row[var_name] = str(value.value)
                     elif isinstance(value, ox.BlankNode):
-                        row[str(var)] = f"_:{value.value}"
+                        row[var_name] = f"_:{value.value}"
             rows.append(row)
         return rows
 
@@ -136,6 +137,14 @@ class Store:
 
     def __len__(self) -> int:
         return len(self._store)
+
+    def update(self, sparql: str) -> None:
+        """Execute a SPARQL UPDATE query (INSERT, DELETE, etc.).
+
+        Args:
+            sparql: SPARQL UPDATE query string.
+        """
+        self._store.update(sparql)
 
     def clear(self, graph_name: str | None = None) -> None:
         """Clear all triples, optionally from a specific graph."""
