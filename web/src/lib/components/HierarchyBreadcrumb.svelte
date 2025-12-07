@@ -1,0 +1,63 @@
+<script lang="ts">
+	import { getDisplayName, type EntityRef } from '$lib/api';
+
+	interface Props {
+		currentLabel: string;
+		superclasses: EntityRef[];
+		onNavigate: (uri: string, label: string) => void;
+	}
+
+	let { currentLabel, superclasses, onNavigate }: Props = $props();
+
+	// Reverse superclasses to show from root to current
+	const path = $derived([...superclasses].reverse());
+</script>
+
+<nav class="hierarchy-breadcrumb" aria-label="Class hierarchy">
+	{#each path as ancestor, i (ancestor.uri)}
+		{@const displayName = getDisplayName(ancestor)}
+		<button class="breadcrumb-item" onclick={() => onNavigate(ancestor.uri, displayName)}>
+			{displayName}
+		</button>
+		<span class="separator">›</span>
+	{/each}
+	<span class="current">{currentLabel}</span>
+</nav>
+
+<style>
+	.hierarchy-breadcrumb {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: var(--space-1);
+		font-family: var(--font-serif);
+		font-size: var(--text-sm);
+		line-height: var(--leading-tight);
+	}
+
+	.breadcrumb-item {
+		background: none;
+		border: none;
+		padding: 0;
+		margin: 0;
+		font: inherit;
+		color: var(--text-secondary);
+		cursor: pointer;
+		transition: var(--transition-fast);
+	}
+
+	.breadcrumb-item:hover {
+		color: var(--accent);
+		text-decoration: underline;
+	}
+
+	.separator {
+		color: var(--text-muted);
+		user-select: none;
+	}
+
+	.current {
+		color: var(--text-primary);
+		font-weight: 500;
+	}
+</style>

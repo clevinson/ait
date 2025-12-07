@@ -1,0 +1,156 @@
+/*
+ * Design Tokens for ait
+ *
+ * Aesthetic: Minimal, scholarly, oldschool warmth
+ * Inspired by: are.na (restraint), bicorder (terminal), cdrxiv (academic)
+ */
+
+:root {
+  /* ─────────────────────────────────────────────────────────────
+   * Typography
+   * Serif for prose/labels, monospace for technical content
+   * ───────────────────────────────────────────────────────────── */
+
+  --font-serif: 'Iowan Old Style', 'Palatino Linotype', 'URW Palladio L', P052, serif;
+  --font-mono: 'Berkeley Mono', 'IBM Plex Mono', 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+
+  /* Type scale - modest, readable */
+  --text-xs: 0.75rem;     /* 12px - metadata, timestamps */
+  --text-sm: 0.8125rem;   /* 13px - secondary content */
+  --text-base: 0.9375rem; /* 15px - body text */
+  --text-lg: 1.125rem;    /* 18px - emphasis */
+  --text-xl: 1.375rem;    /* 22px - headings */
+  --text-2xl: 1.75rem;    /* 28px - page titles */
+
+  --leading-tight: 1.25;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.7;
+
+  /* ─────────────────────────────────────────────────────────────
+   * Colors - Warm, paper-like, low contrast
+   * ───────────────────────────────────────────────────────────── */
+
+  /* Background layers */
+  --bg-base: #faf9f7;        /* Warm off-white, like aged paper */
+  --bg-surface: #ffffff;      /* Cards, elevated surfaces */
+  --bg-subtle: #f3f1ed;       /* Sidebar, secondary areas */
+  --bg-muted: #e8e5df;        /* Hover states, borders */
+
+  /* Text colors */
+  --text-primary: #2c2825;    /* Near-black, warm undertone */
+  --text-secondary: #5c5650;  /* De-emphasized content */
+  --text-tertiary: #8a847c;   /* Metadata, hints */
+  --text-muted: #b3aca3;      /* Disabled, placeholders */
+
+  /* Accent - Muted blue, scholarly */
+  --accent: #4a5d7a;          /* Links, interactive elements */
+  --accent-hover: #3a4d6a;    /* Darker on hover */
+  --accent-muted: #8899aa;    /* Subtle accent uses */
+
+  /* Semantic */
+  --border: #e0dcd5;          /* Subtle dividers */
+  --border-focus: #4a5d7a;    /* Focus rings */
+  --shadow: rgba(0, 0, 0, 0.04);
+
+  /* Status */
+  --color-error: #a33;
+
+  /* ─────────────────────────────────────────────────────────────
+   * Entity Type Colors - For OWL/SKOS type badges
+   * ───────────────────────────────────────────────────────────── */
+
+  /* OWL Classes */
+  --entity-class-bg: rgba(74, 93, 122, 0.1);
+  --entity-class-color: var(--accent);
+  --entity-class-border: rgba(74, 93, 122, 0.3);
+
+  /* OWL Object Properties */
+  --entity-object-prop-bg: rgba(107, 142, 35, 0.1);
+  --entity-object-prop-color: #5a7a2a;
+  --entity-object-prop-border: rgba(107, 142, 35, 0.3);
+
+  /* OWL Datatype Properties */
+  --entity-data-prop-bg: rgba(178, 102, 76, 0.1);
+  --entity-data-prop-color: #a25a3a;
+  --entity-data-prop-border: rgba(178, 102, 76, 0.3);
+
+  /* OWL Annotation Properties */
+  --entity-annotation-bg: rgba(128, 128, 128, 0.1);
+  --entity-annotation-color: var(--text-secondary);
+  --entity-annotation-border: rgba(128, 128, 128, 0.3);
+
+  /* OWL Named Individuals */
+  --entity-individual-bg: rgba(147, 112, 219, 0.1);
+  --entity-individual-color: #7a5ab0;
+  --entity-individual-border: rgba(147, 112, 219, 0.3);
+
+  /* SKOS Concept Schemes */
+  --entity-concept-scheme-bg: rgba(0, 128, 128, 0.1);
+  --entity-concept-scheme-color: #006666;
+  --entity-concept-scheme-border: rgba(0, 128, 128, 0.3);
+
+  /* SKOS Concepts */
+  --entity-concept-bg: rgba(32, 178, 170, 0.1);
+  --entity-concept-color: #148080;
+  --entity-concept-border: rgba(32, 178, 170, 0.3);
+
+  /* ─────────────────────────────────────────────────────────────
+   * Spacing - Generous, let content breathe
+   * ───────────────────────────────────────────────────────────── */
+
+  --space-1: 0.25rem;   /* 4px */
+  --space-2: 0.5rem;    /* 8px */
+  --space-3: 0.75rem;   /* 12px */
+  --space-4: 1rem;      /* 16px */
+  --space-5: 1.5rem;    /* 24px */
+  --space-6: 2rem;      /* 32px */
+  --space-7: 3rem;      /* 48px */
+  --space-8: 4rem;      /* 64px */
+
+  /* ─────────────────────────────────────────────────────────────
+   * Layout
+   * ───────────────────────────────────────────────────────────── */
+
+  --sidebar-width: 280px;
+  --detail-panel-width: 320px;
+  --max-content-width: 800px;
+
+  /* ─────────────────────────────────────────────────────────────
+   * Borders & Radii - Minimal, subtle
+   * ───────────────────────────────────────────────────────────── */
+
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+
+  --border-width: 1px;
+
+  /* ─────────────────────────────────────────────────────────────
+   * Transitions - Understated
+   * ───────────────────────────────────────────────────────────── */
+
+  --transition-fast: 100ms ease;
+  --transition-base: 150ms ease;
+  --transition-slow: 300ms ease;
+}
+
+/* Dark mode override (optional, for later) */
+@media (prefers-color-scheme: dark) {
+  :root.auto-dark {
+    --bg-base: #1a1918;
+    --bg-surface: #242220;
+    --bg-subtle: #2a2826;
+    --bg-muted: #3a3835;
+
+    --text-primary: #e8e5e0;
+    --text-secondary: #b3aea5;
+    --text-tertiary: #7a756c;
+    --text-muted: #5a5550;
+
+    --accent: #8899bb;
+    --accent-hover: #99aacc;
+
+    --border: #3a3835;
+  }
+}

@@ -362,16 +362,26 @@ class IngestResponse(BaseModel):
     triple_count: int
 
 
+class EntityRef(BaseModel):
+    """Reference to an entity with display info."""
+
+    uri: str
+    label: str
+    prefix_iri: str | None = None
+
+
 class EntityInfo(BaseModel):
     """Detailed information about an OWL entity."""
 
     uri: str
     label: str | None = None
+    prefix_iri: str | None = None  # For display name computation
     comment: str | None = None
-    entity_type: str  # Class, ObjectProperty, DatatypeProperty, AnnotationProperty, NamedIndividual
+    entity_type: str  # Primary type: Class, ObjectProperty, DatatypeProperty, etc.
+    all_types: list[EntityRef] = []  # All rdf:types
     is_defined_by: str | None = None
-    superclasses: list[dict[str, str]] = []  # For breadcrumb: [{uri, label}, ...]
-    subclasses: list[dict[str, str]] = []
+    superclasses: list[EntityRef] = []  # For breadcrumb
+    subclasses: list[EntityRef] = []
 
 
 class PropertyInfo(BaseModel):
@@ -404,6 +414,7 @@ class CodeListMember(BaseModel):
 
     uri: str
     label: str
+    notation: str | None = None  # skos:notation - the code value
     description: str | None = None
 
 
@@ -422,6 +433,7 @@ class HierarchyNode(BaseModel):
 
     uri: str
     label: str
+    prefix_iri: str | None = None  # prefixIRI for display name computation
     entity_type: str  # Class, ConceptScheme, Concept
     parent_uris: list[str] = []  # All direct superclasses (for multiple inheritance)
     is_external: bool = False  # True if class is from an external vocabulary
@@ -1037,6 +1049,28 @@ def _extract_local_name(uri: str) -> str:
     return uri[idx + 1:] if idx >= 0 else uri
 
 
+def _extract_prefix_local_name(prefix_iri: str | None) -> str | None:
+    """Extract local name from prefixIRI notation (e.g., 'glosis:availableWaterHoldingCapacity' -> 'availableWaterHoldingCapacity')."""
+    if not prefix_iri or ":" not in prefix_iri:
+        return None
+    parts = prefix_iri.split(":", 1)
+    return parts[1] if len(parts) > 1 and parts[1] else None
+
+
+def _get_sidebar_display_name(prefix_iri: str | None, label: str | None, uri: str) -> str:
+    """Get the display name for sidebar items with priority: prefixIRI local > URI local > label."""
+    # Priority 1: Local part of prefixIRI
+    prefix_local = _extract_prefix_local_name(prefix_iri)
+    if prefix_local:
+        return prefix_local
+    # Priority 2: Local part of URI (usually a good short identifier)
+    uri_local = _extract_local_name(uri)
+    if uri_local:
+        return uri_local
+    # Priority 3: Label (fallback)
+    return label or uri
+
+
 def _resolve_blank_node_range(store: Store, graph_uri: str, property_uri: str) -> list[dict[str, str]]:
     """Resolve blank node ranges that contain owl:oneOf restrictions.
 
@@ -1176,11 +1210,12 @@ async def get_entity_info(ontology: str, entity: str) -> EntityInfo:
 
     # Get basic info
     info_query = f"""
-    SELECT ?label ?comment ?isDefinedBy WHERE {{
+    SELECT ?label ?comment ?isDefinedBy ?prefixIRI WHERE {{
         GRAPH <{ontology}> {{
             OPTIONAL {{ <{entity}> <http://www.w3.org/2000/01/rdf-schema#label> ?label }}
             OPTIONAL {{ <{entity}> <http://www.w3.org/2000/01/rdf-schema#comment> ?comment }}
             OPTIONAL {{ <{entity}> <http://www.w3.org/2000/01/rdf-schema#isDefinedBy> ?isDefinedBy }}
+            OPTIONAL {{ <{entity}> <http://data.bioontology.org/metadata/prefixIRI> ?prefixIRI }}
         }}
     }} LIMIT 1
     """
@@ -1188,18 +1223,19 @@ async def get_entity_info(ontology: str, entity: str) -> EntityInfo:
     info = info_results[0] if info_results else {}
 
     # Get superclass chain for breadcrumb (for Classes)
-    superclasses: list[dict[str, str]] = []
+    superclasses: list[EntityRef] = []
     if entity_type == "Class":
         # Walk up the superclass chain
         visited = {entity}
         current = entity
         for _ in range(20):  # Max depth to prevent infinite loops
             parent_query = f"""
-            SELECT ?parent ?parentLabel WHERE {{
+            SELECT ?parent ?parentLabel ?parentPrefixIRI WHERE {{
                 GRAPH <{ontology}> {{
                     <{current}> <http://www.w3.org/2000/01/rdf-schema#subClassOf> ?parent .
                     FILTER(isIRI(?parent))
                     OPTIONAL {{ ?parent <http://www.w3.org/2000/01/rdf-schema#label> ?parentLabel }}
+                    OPTIONAL {{ ?parent <http://data.bioontology.org/metadata/prefixIRI> ?parentPrefixIRI }}
                 }}
             }} LIMIT 1
             """
@@ -1210,21 +1246,23 @@ async def get_entity_info(ontology: str, entity: str) -> EntityInfo:
             if not parent_uri or parent_uri in visited:
                 break
             visited.add(parent_uri)
-            superclasses.append({
-                "uri": parent_uri,
-                "label": parent_results[0].get("parentLabel") or _extract_local_name(parent_uri)
-            })
+            superclasses.append(EntityRef(
+                uri=parent_uri,
+                label=parent_results[0].get("parentLabel") or _extract_local_name(parent_uri),
+                prefix_iri=parent_results[0].get("parentPrefixIRI")
+            ))
             current = parent_uri
 
     # Get direct subclasses
-    subclasses: list[dict[str, str]] = []
+    subclasses: list[EntityRef] = []
     if entity_type == "Class":
         subclass_query = f"""
-        SELECT DISTINCT ?sub ?subLabel WHERE {{
+        SELECT DISTINCT ?sub ?subLabel ?subPrefixIRI WHERE {{
             GRAPH <{ontology}> {{
                 ?sub <http://www.w3.org/2000/01/rdf-schema#subClassOf> <{entity}> .
                 FILTER(isIRI(?sub))
                 OPTIONAL {{ ?sub <http://www.w3.org/2000/01/rdf-schema#label> ?subLabel }}
+                OPTIONAL {{ ?sub <http://data.bioontology.org/metadata/prefixIRI> ?subPrefixIRI }}
             }}
         }} LIMIT 50
         """
@@ -1232,19 +1270,46 @@ async def get_entity_info(ontology: str, entity: str) -> EntityInfo:
         for r in sub_results:
             sub_uri = r.get("sub")
             if sub_uri:
-                subclasses.append({
-                    "uri": sub_uri,
-                    "label": r.get("subLabel") or _extract_local_name(sub_uri)
-                })
+                subclasses.append(EntityRef(
+                    uri=sub_uri,
+                    label=r.get("subLabel") or _extract_local_name(sub_uri),
+                    prefix_iri=r.get("subPrefixIRI")
+                ))
+
+    # Get all rdf:types for this entity
+    all_types: list[EntityRef] = []
+    types_query = f"""
+    SELECT DISTINCT ?type ?typeLabel ?typePrefixIRI WHERE {{
+        GRAPH <{ontology}> {{
+            <{entity}> a ?type .
+            FILTER(isIRI(?type))
+            OPTIONAL {{ ?type <http://www.w3.org/2000/01/rdf-schema#label> ?typeLabel }}
+            OPTIONAL {{ ?type <http://data.bioontology.org/metadata/prefixIRI> ?typePrefixIRI }}
+        }}
+    }}
+    """
+    types_results = store.query(types_query)
+    for r in types_results:
+        type_uri = r.get("type")
+        if type_uri:
+            all_types.append(EntityRef(
+                uri=type_uri,
+                label=r.get("typeLabel") or _extract_local_name(type_uri),
+                prefix_iri=r.get("typePrefixIRI")
+            ))
+    # Sort by label
+    all_types = sorted(all_types, key=lambda x: x.label)
 
     return EntityInfo(
         uri=entity,
         label=info.get("label") or _extract_local_name(entity),
+        prefix_iri=info.get("prefixIRI"),
         comment=info.get("comment"),
         entity_type=entity_type,
+        all_types=all_types,
         is_defined_by=info.get("isDefinedBy"),
         superclasses=superclasses,
-        subclasses=sorted(subclasses, key=lambda x: x.get("label", ""))
+        subclasses=sorted(subclasses, key=lambda x: x.label)
     )
 
 
@@ -1505,7 +1570,7 @@ async def get_codelist_info(ontology: str, entity: str) -> CodeListInfo | None:
     if pattern == "skos_scheme":
         # Get members via skos:inScheme
         members_query = f"""
-        SELECT DISTINCT ?member ?label ?description WHERE {{
+        SELECT DISTINCT ?member ?label ?notation ?description WHERE {{
             GRAPH <{ontology}> {{
                 ?member <{SKOS_IN_SCHEME}> <{entity}> .
                 OPTIONAL {{
@@ -1515,11 +1580,14 @@ async def get_codelist_info(ontology: str, entity: str) -> CodeListInfo | None:
                     ?member <http://www.w3.org/2000/01/rdf-schema#label> ?rdfsLabel .
                 }}
                 OPTIONAL {{
+                    ?member <http://www.w3.org/2004/02/skos/core#notation> ?notation .
+                }}
+                OPTIONAL {{
                     ?member <http://www.w3.org/2004/02/skos/core#definition> ?description .
                 }}
                 BIND(COALESCE(?label, ?rdfsLabel) AS ?finalLabel)
             }}
-        }} ORDER BY ?label LIMIT 500
+        }} ORDER BY ?notation ?label LIMIT 500
         """
         results = store.query(members_query)
         for r in results:
@@ -1528,20 +1596,22 @@ async def get_codelist_info(ontology: str, entity: str) -> CodeListInfo | None:
                 members.append(CodeListMember(
                     uri=member_uri,
                     label=r.get("label") or r.get("rdfsLabel") or _extract_local_name(member_uri),
+                    notation=r.get("notation"),
                     description=r.get("description")
                 ))
 
     elif pattern == "skos_collection":
         # Get members via skos:member
         members_query = f"""
-        SELECT DISTINCT ?member ?label ?description WHERE {{
+        SELECT DISTINCT ?member ?label ?notation ?description WHERE {{
             GRAPH <{ontology}> {{
                 <{entity}> <{SKOS_MEMBER}> ?member .
                 OPTIONAL {{ ?member <{SKOS_PREF_LABEL}> ?label }}
                 OPTIONAL {{ ?member <http://www.w3.org/2000/01/rdf-schema#label> ?rdfsLabel }}
+                OPTIONAL {{ ?member <http://www.w3.org/2004/02/skos/core#notation> ?notation }}
                 OPTIONAL {{ ?member <http://www.w3.org/2004/02/skos/core#definition> ?description }}
             }}
-        }} ORDER BY ?label LIMIT 500
+        }} ORDER BY ?notation ?label LIMIT 500
         """
         results = store.query(members_query)
         for r in results:
@@ -1550,6 +1620,7 @@ async def get_codelist_info(ontology: str, entity: str) -> CodeListInfo | None:
                 members.append(CodeListMember(
                     uri=member_uri,
                     label=r.get("label") or r.get("rdfsLabel") or _extract_local_name(member_uri),
+                    notation=r.get("notation"),
                     description=r.get("description")
                 ))
 
@@ -1703,7 +1774,7 @@ async def get_class_hierarchy(ontology_uri: str) -> list[HierarchyNode]:
 
     # Query for OWL/RDFS classes only (not SKOS concepts)
     query = f"""
-    SELECT DISTINCT ?class ?label ?parent WHERE {{
+    SELECT DISTINCT ?class ?label ?prefixIRI ?parent WHERE {{
         GRAPH <{ontology_uri}> {{
             # Get OWL and RDFS classes
             {{ ?class a <{OWL_CLASS}> . }}
@@ -1712,6 +1783,9 @@ async def get_class_hierarchy(ontology_uri: str) -> list[HierarchyNode]:
 
             # Get label
             OPTIONAL {{ ?class <http://www.w3.org/2000/01/rdf-schema#label> ?label }}
+
+            # Get prefixIRI (from BioPortal/OntoPortal metadata)
+            OPTIONAL {{ ?class <http://data.bioontology.org/metadata/prefixIRI> ?prefixIRI }}
 
             # Get parent via subClassOf
             OPTIONAL {{
@@ -1762,6 +1836,7 @@ async def get_class_hierarchy(ontology_uri: str) -> list[HierarchyNode]:
             nodes[class_uri] = HierarchyNode(
                 uri=class_uri,
                 label=row.get("label") or _extract_local_name(class_uri),
+                prefix_iri=row.get("prefixIRI"),
                 entity_type="Class",
                 parent_uris=[],
                 is_external=is_external(class_uri)
@@ -1812,15 +1887,17 @@ class CodeListSummary(BaseModel):
 
     uri: str
     label: str
+    prefix_iri: str | None = None  # prefixIRI for display name computation
     pattern: str
     member_count: int
 
 
 @app.get("/api/ontologies/{ontology_uri:path}/codelists", response_model=list[CodeListSummary])
 async def list_codelists(ontology_uri: str) -> list[CodeListSummary]:
-    """List all code lists in an ontology (classes with enumerated members).
+    """List SKOS concept schemes and collections in an ontology.
 
-    Returns just the code list names and member counts, not the members themselves.
+    Returns schemes/collections with member counts for the sidebar.
+    OWL code list classes (with owl:oneOf) are shown in the class hierarchy instead.
     """
     store = get_store()
 
@@ -1849,49 +1926,44 @@ async def list_codelists(ontology_uri: str) -> list[CodeListSummary]:
     # Track URIs we've already added
     seen_uris = {cl.uri for cl in codelists}
 
-    # Pattern 2: OWL classes with owl:oneOf
-    oneof_query = f"""
-    SELECT ?class ?label (COUNT(DISTINCT ?member) as ?count) WHERE {{
+    # Pattern 2: SKOS Collections with skos:member
+    collection_query = f"""
+    SELECT ?collection ?label (COUNT(DISTINCT ?member) as ?count) WHERE {{
         GRAPH <{ontology_uri}> {{
-            ?class <{OWL_ONE_OF}>/<{RDF_REST}>*/<{RDF_FIRST}> ?member .
-            FILTER(isIRI(?member))
-            OPTIONAL {{ ?class <http://www.w3.org/2000/01/rdf-schema#label> ?label }}
+            ?collection <{SKOS_MEMBER}> ?member .
+            OPTIONAL {{ ?collection <http://www.w3.org/2000/01/rdf-schema#label> ?label }}
         }}
-    }} GROUP BY ?class ?label
+    }} GROUP BY ?collection ?label
     """
-    oneof_results = store.query(oneof_query)
-    for r in oneof_results:
-        uri = r.get("class")
+    collection_results = store.query(collection_query)
+    for r in collection_results:
+        uri = r.get("collection")
         if uri and not uri.startswith("_:") and uri not in seen_uris:
             codelists.append(CodeListSummary(
                 uri=uri,
                 label=r.get("label") or _extract_local_name(uri),
-                pattern="owl_oneof",
+                pattern="skos_collection",
                 member_count=int(r.get("count", 0))
             ))
             seen_uris.add(uri)
 
-    # Pattern 3: OWL classes with equivalentClass/oneOf
-    equiv_query = f"""
-    SELECT ?class ?label (COUNT(DISTINCT ?member) as ?count) WHERE {{
-        GRAPH <{ontology_uri}> {{
-            ?class <{OWL_EQUIVALENT_CLASS}>/<{OWL_ONE_OF}>/<{RDF_REST}>*/<{RDF_FIRST}> ?member .
-            FILTER(isIRI(?member))
-            OPTIONAL {{ ?class <http://www.w3.org/2000/01/rdf-schema#label> ?label }}
+    # Fetch prefixIRIs for all collected URIs
+    if codelists:
+        uris_to_check = [cl.uri for cl in codelists]
+        prefix_query = f"""
+        SELECT ?uri ?prefixIRI WHERE {{
+            GRAPH <{ontology_uri}> {{
+                VALUES ?uri {{ {' '.join(f'<{u}>' for u in uris_to_check)} }}
+                ?uri <http://data.bioontology.org/metadata/prefixIRI> ?prefixIRI .
+            }}
         }}
-    }} GROUP BY ?class ?label
-    """
-    equiv_results = store.query(equiv_query)
-    for r in equiv_results:
-        uri = r.get("class")
-        if uri and not uri.startswith("_:") and uri not in seen_uris:
-            codelists.append(CodeListSummary(
-                uri=uri,
-                label=r.get("label") or _extract_local_name(uri),
-                pattern="owl_equivalent_oneof",
-                member_count=int(r.get("count", 0))
-            ))
-            seen_uris.add(uri)
+        """
+        prefix_results = store.query(prefix_query)
+        prefix_map = {r.get("uri"): r.get("prefixIRI") for r in prefix_results if r.get("uri")}
+
+        # Set prefix_iri field (let frontend compute display name)
+        for cl in codelists:
+            cl.prefix_iri = prefix_map.get(cl.uri)
 
     # Sort by label
     return sorted(codelists, key=lambda cl: cl.label.lower())
