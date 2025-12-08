@@ -1,14 +1,15 @@
 <script lang="ts">
-	import { getClassHierarchy, listCodeLists, getSidebarDisplayName, type HierarchyNode, type CodeListSummary } from '$lib/api';
+	import { getClassHierarchy, listCodeLists, getDisplayName, type HierarchyNode, type CodeListSummary, type DisplayNameMode } from '$lib/api';
 	import { onMount } from 'svelte';
 
 	interface Props {
 		ontologyUri: string;
 		selectedClassUri?: string | null;
 		onSelect: (classUri: string, label: string) => void;
+		displayNameMode?: DisplayNameMode;
 	}
 
-	let { ontologyUri, selectedClassUri = null, onSelect }: Props = $props();
+	let { ontologyUri, selectedClassUri = null, onSelect, displayNameMode = 'label' }: Props = $props();
 
 	interface TreeNode {
 		uri: string;
@@ -103,7 +104,7 @@
 
 			return {
 				uri,
-				label: getSidebarDisplayName(node),
+				label: getDisplayName(node, displayNameMode),
 				children,
 				expanded: false
 			};
@@ -152,15 +153,15 @@
 				<h3 class="section-header">Concept Schemes</h3>
 				<ul class="codelist-list">
 					{#each codeLists as codeList (codeList.uri)}
-						{@const displayName = getSidebarDisplayName(codeList)}
+						{@const name = getDisplayName(codeList, displayNameMode)}
 						<li>
 							<button
 								class="codelist-item"
 								class:selected={selectedClassUri === codeList.uri}
-								onclick={() => handleSelect(codeList.uri, displayName)}
+								onclick={() => handleSelect(codeList.uri, name)}
 								title={codeList.uri}
 							>
-								<span class="codelist-label">{displayName}</span>
+								<span class="codelist-label">{name}</span>
 								<span class="codelist-count">{codeList.member_count}</span>
 							</button>
 						</li>

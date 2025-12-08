@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { getEntityInfo, getCodeListInfo, getDisplayName, executeQuery, type EntityInfo, type CodeListInfo } from '$lib/api';
+	import { getEntityInfo, getCodeListInfo, getDisplayName, executeQuery, type EntityInfo, type CodeListInfo, type DisplayNameMode } from '$lib/api';
 	import { prefixStore, getPrefixedForm } from '$lib/prefixContext';
 	import TypeBadge from './TypeBadge.svelte';
 	import IriLink from './IriLink.svelte';
@@ -13,9 +13,10 @@
 		entityUri: string;
 		onNavigate: (uri: string, label: string) => void;
 		onLayoutChange?: (hideDetailPanel: boolean) => void;
+		displayNameMode?: DisplayNameMode;
 	}
 
-	let { ontologyUri, entityUri, onNavigate, onLayoutChange }: Props = $props();
+	let { ontologyUri, entityUri, onNavigate, onLayoutChange, displayNameMode = 'label' }: Props = $props();
 
 	// Get prefix map for formatting URIs
 	const prefixes = $derived($prefixStore);
@@ -140,7 +141,7 @@
 						<TypeBadge type={entityInfo.entity_type} />
 						{#if entityInfo.all_types.length > 1}
 							{#each entityInfo.all_types as typeRef (typeRef.uri)}
-								{@const typeName = getDisplayName(typeRef)}
+								{@const typeName = getDisplayName(typeRef, displayNameMode)}
 								{#if typeName !== entityInfo.entity_type && !['Thing', 'Resource'].includes(typeName)}
 									<span class="secondary-type" title={typeRef.uri}>{typeName}</span>
 								{/if}
@@ -151,15 +152,16 @@
 				</div>
 
 				{#if entityInfo.entity_type === 'Class' && entityInfo.superclasses.length > 0}
-					{@const currentDisplayName = getDisplayName({ uri: entityInfo.uri, label: entityInfo.label || '', prefix_iri: entityInfo.prefix_iri })}
+					{@const currentDisplayName = getDisplayName({ uri: entityInfo.uri, label: entityInfo.label || '' }, displayNameMode)}
 					<HierarchyBreadcrumb
 						currentLabel={currentDisplayName}
 						superclasses={entityInfo.superclasses}
 						{onNavigate}
+						{displayNameMode}
 					/>
 				{:else}
-					{@const displayName = getDisplayName({ uri: entityInfo.uri, label: entityInfo.label || '', prefix_iri: entityInfo.prefix_iri })}
-					<h2 class="entity-label">{displayName}</h2>
+					{@const name = getDisplayName({ uri: entityInfo.uri, label: entityInfo.label || '' }, displayNameMode)}
+					<h2 class="entity-label">{name}</h2>
 				{/if}
 
 				{#if entityInfo.comment}
@@ -238,12 +240,13 @@
 						<h4 class="section-title">Subclasses</h4>
 						<ul class="subclass-list">
 							{#each entityInfo.subclasses as sub (sub.uri)}
+								{@const subName = getDisplayName(sub, displayNameMode)}
 								<li>
 									<button
 										class="subclass-link"
-										onclick={() => onNavigate(sub.uri, getDisplayName(sub))}
+										onclick={() => onNavigate(sub.uri, subName)}
 									>
-										{getDisplayName(sub)}
+										{subName}
 									</button>
 								</li>
 							{/each}

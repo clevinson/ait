@@ -3,7 +3,7 @@
 	import EntityFocusView from './EntityFocusView.svelte';
 	import DetailPanel from './DetailPanel.svelte';
 	import NamespaceConfig from './NamespaceConfig.svelte';
-	import { refreshOntology, getOntologyPrefixes } from '$lib/api';
+	import { refreshOntology, getOntologyPrefixes, getOntologyConfig, type DisplayNameMode } from '$lib/api';
 	import { prefixStore } from '$lib/prefixContext';
 	import { onMount } from 'svelte';
 
@@ -15,9 +15,12 @@
 
 	let { ontologyUri, ontologyLabel, onRefresh }: Props = $props();
 
-	// Fetch and set prefixes on mount
+	// Display name mode from config
+	let displayNameMode = $state<DisplayNameMode>('label');
+
+	// Fetch prefixes and config on mount
 	onMount(async () => {
-		await loadPrefixes();
+		await Promise.all([loadPrefixes(), loadConfig()]);
 	});
 
 	async function loadPrefixes() {
@@ -29,6 +32,15 @@
 		}
 	}
 
+	async function loadConfig() {
+		try {
+			const config = await getOntologyConfig(ontologyUri);
+			displayNameMode = config.display_name_mode || 'label';
+		} catch (e) {
+			console.error('Failed to load config:', e);
+		}
+	}
+
 	// View mode: 'explore' or 'config'
 	type ViewMode = 'explore' | 'config';
 	let viewMode = $state<ViewMode>('explore');
@@ -36,9 +48,6 @@
 	// Currently focused entity
 	let focusedUri = $state<string | null>(null);
 	let focusedLabel = $state<string>('');
-
-	// Reference to ClassTree for refreshing after config change
-	let classTreeRef = $state<{ refresh?: () => void } | null>(null);
 
 	// Refresh state
 	let refreshing = $state(false);
@@ -102,8 +111,10 @@
 		viewMode = 'explore';
 	}
 
-	function handleConfigSaved() {
+	async function handleConfigSaved() {
 		viewMode = 'explore';
+		// Reload config to get updated display name mode
+		await loadConfig();
 		// Trigger a reload of the class tree to reflect new config
 		// We'll use a key to force remount
 		configVersion++;
@@ -194,6 +205,7 @@
 						{ontologyUri}
 						selectedClassUri={focusedUri}
 						onSelect={handleClassSelect}
+						{displayNameMode}
 					/>
 				{/key}
 			{/if}
@@ -224,6 +236,7 @@
 					entityUri={focusedUri}
 					onNavigate={handleClassSelect}
 					onLayoutChange={handleLayoutChange}
+					{displayNameMode}
 				/>
 			{:else}
 				<div class="empty-state">
@@ -238,6 +251,7 @@
 					{ontologyUri}
 					entityUri={focusedUri}
 					onNavigate={handleClassSelect}
+					{displayNameMode}
 				/>
 			</aside>
 		{/if}

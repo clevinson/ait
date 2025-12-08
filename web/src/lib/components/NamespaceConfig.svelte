@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { listNamespaces, saveOntologyConfig, type NamespaceInfo } from '$lib/api';
+	import { listNamespaces, saveOntologyConfig, getOntologyConfig, type NamespaceInfo, type DisplayNameMode } from '$lib/api';
 	import { onMount } from 'svelte';
 
 	interface Props {
@@ -19,20 +19,36 @@
 	// Track selected namespaces locally
 	let selectedSet = $state<Set<string>>(new Set());
 
+	// Track display name mode
+	let displayNameMode = $state<DisplayNameMode>('label');
+
+	// Track show deprecated setting
+	let showDeprecated = $state(false);
+
 	onMount(async () => {
-		await loadNamespaces();
+		await loadConfig();
 	});
 
-	async function loadNamespaces() {
+	async function loadConfig() {
 		loading = true;
 		error = null;
 
 		try {
-			namespaces = await listNamespaces(ontologyUri);
+			// Load both namespaces and config in parallel
+			const [nsData, configData] = await Promise.all([
+				listNamespaces(ontologyUri),
+				getOntologyConfig(ontologyUri)
+			]);
+
+			namespaces = nsData;
 			// Initialize selected set from current config
 			selectedSet = new Set(namespaces.filter((n) => n.selected).map((n) => n.namespace));
+			// Initialize display name mode
+			displayNameMode = configData.display_name_mode || 'label';
+			// Initialize show deprecated
+			showDeprecated = configData.show_deprecated || false;
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to load namespaces';
+			error = e instanceof Error ? e.message : 'Failed to load configuration';
 		} finally {
 			loading = false;
 		}
@@ -60,7 +76,7 @@
 		error = null;
 
 		try {
-			await saveOntologyConfig(ontologyUri, [...selectedSet]);
+			await saveOntologyConfig(ontologyUri, [...selectedSet], displayNameMode, showDeprecated);
 			onSave();
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to save configuration';
@@ -99,8 +115,55 @@
 		{:else if error}
 			<div class="status error">{error}</div>
 		{:else}
-			<div class="help-text">
-				<p>Select which namespaces to include in the class hierarchy. Classes from unselected namespaces will be hidden (but can be shown via the toggle in the sidebar).</p>
+			<div class="config-section">
+				<h2 class="section-title">Display Names</h2>
+				<p class="section-description">Choose how class names are displayed in the hierarchy and sidebar.</p>
+				<div class="display-mode-options">
+					<label class="radio-option" class:selected={displayNameMode === 'label'}>
+						<input
+							type="radio"
+							name="displayMode"
+							value="label"
+							checked={displayNameMode === 'label'}
+							onchange={() => displayNameMode = 'label'}
+						/>
+						<span class="radio-content">
+							<span class="radio-label">Label</span>
+							<span class="radio-description">Use rdfs:label (e.g., "material entity", "role")</span>
+						</span>
+					</label>
+					<label class="radio-option" class:selected={displayNameMode === 'identifier'}>
+						<input
+							type="radio"
+							name="displayMode"
+							value="identifier"
+							checked={displayNameMode === 'identifier'}
+							onchange={() => displayNameMode = 'identifier'}
+						/>
+						<span class="radio-content">
+							<span class="radio-label">Identifier</span>
+							<span class="radio-description">Use IRI terminal component (e.g., "BFO_0000040", "Clay")</span>
+						</span>
+					</label>
+				</div>
+			</div>
+
+			<div class="config-section">
+				<h2 class="section-title">Deprecated Terms</h2>
+				<p class="section-description">Deprecated terms (owl:deprecated) are hidden by default.</p>
+				<label class="checkbox-option">
+					<input
+						type="checkbox"
+						checked={showDeprecated}
+						onchange={() => showDeprecated = !showDeprecated}
+					/>
+					<span class="checkbox-label">Show deprecated terms in hierarchy</span>
+				</label>
+			</div>
+
+			<div class="config-section">
+				<h2 class="section-title">Namespaces</h2>
+				<p class="section-description">Select which namespaces to include in the class hierarchy. Classes from unselected namespaces will be hidden.</p>
 			</div>
 
 			<div class="selection-controls">
@@ -238,19 +301,97 @@
 		font-style: normal;
 	}
 
-	.help-text {
+	.config-section {
 		margin-bottom: var(--space-5);
-		padding: var(--space-4);
-		background: var(--bg-subtle);
-		border-radius: var(--radius-md);
-		border: 1px solid var(--border);
 	}
 
-	.help-text p {
-		margin: 0;
+	.section-title {
+		font-size: var(--text-sm);
+		font-weight: 500;
+		color: var(--text-primary);
+		margin: 0 0 var(--space-2) 0;
+	}
+
+	.section-description {
 		font-size: var(--text-sm);
 		color: var(--text-secondary);
+		margin: 0 0 var(--space-3) 0;
 		line-height: var(--leading-relaxed);
+	}
+
+	.display-mode-options {
+		display: flex;
+		gap: var(--space-3);
+	}
+
+	.radio-option {
+		flex: 1;
+		display: flex;
+		align-items: flex-start;
+		gap: var(--space-3);
+		padding: var(--space-3) var(--space-4);
+		background: var(--bg-surface);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md);
+		cursor: pointer;
+		transition: var(--transition-fast);
+	}
+
+	.radio-option:hover {
+		background: var(--bg-muted);
+	}
+
+	.radio-option.selected {
+		border-color: var(--accent);
+		background: var(--bg-subtle);
+	}
+
+	.radio-option input[type='radio'] {
+		margin-top: 2px;
+		accent-color: var(--accent);
+	}
+
+	.radio-content {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-1);
+	}
+
+	.radio-label {
+		font-size: var(--text-sm);
+		font-weight: 500;
+		color: var(--text-primary);
+	}
+
+	.radio-description {
+		font-size: var(--text-xs);
+		color: var(--text-tertiary);
+		font-family: var(--font-mono);
+	}
+
+	.checkbox-option {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+		padding: var(--space-2) var(--space-3);
+		background: var(--bg-surface);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-md);
+		cursor: pointer;
+		transition: var(--transition-fast);
+	}
+
+	.checkbox-option:hover {
+		background: var(--bg-muted);
+	}
+
+	.checkbox-option input[type='checkbox'] {
+		accent-color: var(--accent);
+	}
+
+	.checkbox-label {
+		font-size: var(--text-sm);
+		color: var(--text-primary);
 	}
 
 	.selection-controls {

@@ -116,6 +116,7 @@ export interface HierarchyNode {
 	entity_type: string;
 	parent_uris: string[];
 	is_external: boolean;
+	is_deprecated: boolean;
 }
 
 export interface CodeListSummary {
@@ -136,6 +137,8 @@ export interface NamespaceInfo {
 export interface OntologyConfig {
 	ontology_uri: string;
 	selected_namespaces: string[];
+	display_name_mode: 'label' | 'identifier';
+	show_deprecated: boolean;
 }
 
 export async function listOntologies(): Promise<OntologyInfo[]> {
@@ -249,7 +252,9 @@ export async function getOntologyConfig(ontologyUri: string): Promise<OntologyCo
 
 export async function saveOntologyConfig(
 	ontologyUri: string,
-	selectedNamespaces: string[]
+	selectedNamespaces: string[],
+	displayNameMode: 'label' | 'identifier' = 'label',
+	showDeprecated: boolean = false
 ): Promise<OntologyConfig> {
 	const encodedUri = encodeURIComponent(ontologyUri);
 	const res = await fetch(`${API_BASE}/ontologies/${encodedUri}/config`, {
@@ -257,7 +262,9 @@ export async function saveOntologyConfig(
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({
 			ontology_uri: ontologyUri,
-			selected_namespaces: selectedNamespaces
+			selected_namespaces: selectedNamespaces,
+			display_name_mode: displayNameMode,
+			show_deprecated: showDeprecated
 		})
 	});
 	if (!res.ok) throw new Error(`Failed to save ontology config: ${res.statusText}`);
@@ -287,10 +294,13 @@ export async function refreshOntology(ontologyUri: string): Promise<IngestRespon
 // Display Name Utilities
 // ============================================================================
 
+export type DisplayNameMode = 'label' | 'identifier';
+
 /**
- * Extract the local name from a URI (after last # or /).
+ * Extract the identifier (local name) from a URI.
+ * Only splits on # or / - underscores are kept as part of the identifier.
  */
-export function extractLocalName(uri: string): string {
+export function extractIdentifier(uri: string): string {
 	const hashIdx = uri.lastIndexOf('#');
 	const slashIdx = uri.lastIndexOf('/');
 	const idx = Math.max(hashIdx, slashIdx);
@@ -298,41 +308,22 @@ export function extractLocalName(uri: string): string {
 }
 
 /**
- * Extract the local name from a prefixIRI notation (e.g., 'glosis:Foo' -> 'Foo').
+ * Get the display name for an entity based on the configured mode.
+ *
+ * @param entity - Entity with uri and label
+ * @param mode - 'label' uses rdfs:label, 'identifier' uses URI terminal component
+ * @returns The display name string
  */
-export function extractPrefixLocalName(prefixIri: string | null | undefined): string | null {
-	if (!prefixIri || !prefixIri.includes(':')) return null;
-	const parts = prefixIri.split(':', 2);
-	return parts[1] || null;
-}
-
-/**
- * Get the display name for an entity with priority:
- * prefixIRI local > label > URI local
- * Works with EntityRef, HierarchyNode, CodeListSummary, or any object with uri/label/prefix_iri
- */
-export function getDisplayName(entity: { uri: string; label: string; prefix_iri?: string | null }): string {
-	// Priority 1: Local part of prefixIRI
-	const prefixLocal = extractPrefixLocalName(entity.prefix_iri);
-	if (prefixLocal) return prefixLocal;
-	// Priority 2: Label
-	if (entity.label) return entity.label;
-	// Priority 3: Local part of URI
-	return extractLocalName(entity.uri);
-}
-
-/**
- * Get the sidebar display name for an entity with priority:
- * prefixIRI local > URI local > label
- * This prioritizes short identifiers over verbose labels for compact sidebar display.
- */
-export function getSidebarDisplayName(entity: { uri: string; label?: string; prefix_iri?: string | null }): string {
-	// Priority 1: Local part of prefixIRI
-	const prefixLocal = extractPrefixLocalName(entity.prefix_iri);
-	if (prefixLocal) return prefixLocal;
-	// Priority 2: Local part of URI (short identifier)
-	const uriLocal = extractLocalName(entity.uri);
-	if (uriLocal) return uriLocal;
-	// Priority 3: Label (fallback)
-	return entity.label || entity.uri;
+export function getDisplayName(
+	entity: { uri: string; label?: string | null },
+	mode: DisplayNameMode = 'label'
+): string {
+	if (mode === 'identifier') {
+		// Use the identifier (terminal URI component), fall back to label
+		const identifier = extractIdentifier(entity.uri);
+		return identifier || entity.label || entity.uri;
+	} else {
+		// Use label, fall back to identifier
+		return entity.label || extractIdentifier(entity.uri);
+	}
 }

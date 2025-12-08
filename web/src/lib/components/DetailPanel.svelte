@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { getEntityInfo, executeQuery, getDisplayName, type EntityInfo } from '$lib/api';
+	import { getEntityInfo, executeQuery, getDisplayName, type EntityInfo, type DisplayNameMode } from '$lib/api';
 	import { prefixStore, getPrefixedForm } from '$lib/prefixContext';
 	import IriLink from './IriLink.svelte';
 
@@ -7,9 +7,10 @@
 		ontologyUri: string;
 		entityUri: string;
 		onNavigate?: (uri: string, label: string) => void;
+		displayNameMode?: DisplayNameMode;
 	}
 
-	let { ontologyUri, entityUri, onNavigate }: Props = $props();
+	let { ontologyUri, entityUri, onNavigate, displayNameMode = 'label' }: Props = $props();
 
 	// Get prefix map for formatting URIs
 	const prefixes = $derived($prefixStore);
@@ -181,18 +182,18 @@
 					<h4 class="section-label">Types</h4>
 					<ul class="types-list">
 						{#each entityInfo.all_types as typeRef (typeRef.uri)}
-							{@const displayName = getDisplayName(typeRef)}
+							{@const typeName = getDisplayName(typeRef, displayNameMode)}
 							<li>
 								{#if onNavigate}
 									<button
 										class="type-link"
-										onclick={() => onNavigate(typeRef.uri, displayName)}
+										onclick={() => onNavigate(typeRef.uri, typeName)}
 										title={typeRef.uri}
 									>
-										{displayName}
+										{typeName}
 									</button>
 								{:else}
-									<span class="type-label">{displayName}</span>
+									<span class="type-label">{typeName}</span>
 								{/if}
 							</li>
 						{/each}

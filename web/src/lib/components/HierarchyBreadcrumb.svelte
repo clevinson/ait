@@ -1,13 +1,14 @@
 <script lang="ts">
-	import { getDisplayName, type EntityRef } from '$lib/api';
+	import { getDisplayName, type EntityRef, type DisplayNameMode } from '$lib/api';
 
 	interface Props {
 		currentLabel: string;
 		superclasses: EntityRef[];
 		onNavigate: (uri: string, label: string) => void;
+		displayNameMode?: DisplayNameMode;
 	}
 
-	let { currentLabel, superclasses, onNavigate }: Props = $props();
+	let { currentLabel, superclasses, onNavigate, displayNameMode = 'label' }: Props = $props();
 
 	// Reverse superclasses to show from root to current
 	const path = $derived([...superclasses].reverse());
@@ -15,9 +16,9 @@
 
 <nav class="hierarchy-breadcrumb" aria-label="Class hierarchy">
 	{#each path as ancestor, i (ancestor.uri)}
-		{@const displayName = getDisplayName(ancestor)}
-		<button class="breadcrumb-item" onclick={() => onNavigate(ancestor.uri, displayName)}>
-			{displayName}
+		{@const name = getDisplayName(ancestor, displayNameMode)}
+		<button class="breadcrumb-item" onclick={() => onNavigate(ancestor.uri, name)}>
+			{name}
 		</button>
 		<span class="separator">›</span>
 	{/each}

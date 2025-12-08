@@ -437,6 +437,7 @@ class HierarchyNode(BaseModel):
     entity_type: str  # Class, ConceptScheme, Concept
     parent_uris: list[str] = []  # All direct superclasses (for multiple inheritance)
     is_external: bool = False  # True if class is from an external vocabulary
+    is_deprecated: bool = False  # True if owl:deprecated true
 
 
 class NamespaceInfo(BaseModel):
@@ -453,6 +454,8 @@ class OntologyConfig(BaseModel):
 
     ontology_uri: str
     selected_namespaces: list[str] = []  # Namespaces user wants to show
+    display_name_mode: str = "label"  # "label" or "identifier"
+    show_deprecated: bool = False  # Whether to show owl:deprecated entities
 
 
 # Map web portal URLs to data API URLs
@@ -807,12 +810,14 @@ async def get_ontology_config_endpoint(ontology_uri: str) -> OntologyConfig:
 
 @app.put("/api/ontologies/{ontology_uri:path}/config", response_model=OntologyConfig)
 async def save_ontology_config(ontology_uri: str, config: OntologyConfig) -> OntologyConfig:
-    """Save configuration for an ontology (selected namespaces)."""
+    """Save configuration for an ontology (selected namespaces, display mode, show deprecated)."""
     store = get_store()
-    _save_ontology_config(store, ontology_uri, config.selected_namespaces)
+    _save_ontology_config(store, ontology_uri, config.selected_namespaces, config.display_name_mode, config.show_deprecated)
     return OntologyConfig(
         ontology_uri=ontology_uri,
-        selected_namespaces=config.selected_namespaces
+        selected_namespaces=config.selected_namespaces,
+        display_name_mode=config.display_name_mode,
+        show_deprecated=config.show_deprecated
     )
 
 
@@ -983,44 +988,111 @@ def _get_ontology_prefixes(store: Store, ontology_uri: str) -> dict[str, str]:
 
 def _get_ontology_config(store: Store, ontology_uri: str) -> OntologyConfig:
     """Read ontology config from the meta graph."""
-    query = f"""
+    # Get selected namespaces
+    ns_query = f"""
     SELECT ?namespace WHERE {{
         GRAPH <{AIT_META_GRAPH}> {{
             <{ontology_uri}> <{AIT_NS}selectedNamespace> ?namespace .
         }}
     }}
     """
-    results = store.query(query)
-    namespaces = [r.get("namespace") for r in results if r.get("namespace")]
-    return OntologyConfig(ontology_uri=ontology_uri, selected_namespaces=namespaces)
+    ns_results = store.query(ns_query)
+    namespaces = [r.get("namespace") for r in ns_results if r.get("namespace")]
+
+    # Get display name mode
+    mode_query = f"""
+    SELECT ?mode WHERE {{
+        GRAPH <{AIT_META_GRAPH}> {{
+            <{ontology_uri}> <{AIT_NS}displayNameMode> ?mode .
+        }}
+    }}
+    """
+    mode_results = store.query(mode_query)
+    display_mode = mode_results[0].get("mode", "label") if mode_results else "label"
+
+    # Get show_deprecated setting
+    deprecated_query = f"""
+    SELECT ?show WHERE {{
+        GRAPH <{AIT_META_GRAPH}> {{
+            <{ontology_uri}> <{AIT_NS}showDeprecated> ?show .
+        }}
+    }}
+    """
+    deprecated_results = store.query(deprecated_query)
+    show_deprecated = False
+    if deprecated_results:
+        val = deprecated_results[0].get("show", "false")
+        show_deprecated = str(val).lower() == "true"
+
+    return OntologyConfig(
+        ontology_uri=ontology_uri,
+        selected_namespaces=namespaces,
+        display_name_mode=display_mode,
+        show_deprecated=show_deprecated
+    )
 
 
-def _save_ontology_config(store: Store, ontology_uri: str, namespaces: list[str]) -> None:
+def _save_ontology_config(store: Store, ontology_uri: str, namespaces: list[str], display_name_mode: str = "label", show_deprecated: bool = False) -> None:
     """Save ontology config to the meta graph."""
     # First, delete existing config for this ontology
-    delete_query = f"""
+    delete_ns_query = f"""
     DELETE WHERE {{
         GRAPH <{AIT_META_GRAPH}> {{
             <{ontology_uri}> <{AIT_NS}selectedNamespace> ?ns .
         }}
     }}
     """
+    delete_mode_query = f"""
+    DELETE WHERE {{
+        GRAPH <{AIT_META_GRAPH}> {{
+            <{ontology_uri}> <{AIT_NS}displayNameMode> ?mode .
+        }}
+    }}
+    """
+    delete_deprecated_query = f"""
+    DELETE WHERE {{
+        GRAPH <{AIT_META_GRAPH}> {{
+            <{ontology_uri}> <{AIT_NS}showDeprecated> ?show .
+        }}
+    }}
+    """
     try:
-        store.update(delete_query)
+        store.update(delete_ns_query)
+        store.update(delete_mode_query)
+        store.update(delete_deprecated_query)
     except Exception:
         pass  # Graph might not exist yet
 
-    # Insert new config
+    # Insert namespace config
     if namespaces:
-        values = " ".join(f"<{ns}>" for ns in namespaces)
-        insert_query = f"""
+        insert_ns_query = f"""
         INSERT DATA {{
             GRAPH <{AIT_META_GRAPH}> {{
                 {" ".join(f'<{ontology_uri}> <{AIT_NS}selectedNamespace> <{ns}> .' for ns in namespaces)}
             }}
         }}
         """
-        store.update(insert_query)
+        store.update(insert_ns_query)
+
+    # Insert display name mode
+    insert_mode_query = f"""
+    INSERT DATA {{
+        GRAPH <{AIT_META_GRAPH}> {{
+            <{ontology_uri}> <{AIT_NS}displayNameMode> "{display_name_mode}" .
+        }}
+    }}
+    """
+    store.update(insert_mode_query)
+
+    # Insert show_deprecated setting
+    insert_deprecated_query = f"""
+    INSERT DATA {{
+        GRAPH <{AIT_META_GRAPH}> {{
+            <{ontology_uri}> <{AIT_NS}showDeprecated> "{str(show_deprecated).lower()}" .
+        }}
+    }}
+    """
+    store.update(insert_deprecated_query)
 
 
 # OWL namespace URIs
@@ -1047,28 +1119,6 @@ def _extract_local_name(uri: str) -> str:
     slash_idx = uri.rfind("/")
     idx = max(hash_idx, slash_idx)
     return uri[idx + 1:] if idx >= 0 else uri
-
-
-def _extract_prefix_local_name(prefix_iri: str | None) -> str | None:
-    """Extract local name from prefixIRI notation (e.g., 'glosis:availableWaterHoldingCapacity' -> 'availableWaterHoldingCapacity')."""
-    if not prefix_iri or ":" not in prefix_iri:
-        return None
-    parts = prefix_iri.split(":", 1)
-    return parts[1] if len(parts) > 1 and parts[1] else None
-
-
-def _get_sidebar_display_name(prefix_iri: str | None, label: str | None, uri: str) -> str:
-    """Get the display name for sidebar items with priority: prefixIRI local > URI local > label."""
-    # Priority 1: Local part of prefixIRI
-    prefix_local = _extract_prefix_local_name(prefix_iri)
-    if prefix_local:
-        return prefix_local
-    # Priority 2: Local part of URI (usually a good short identifier)
-    uri_local = _extract_local_name(uri)
-    if uri_local:
-        return uri_local
-    # Priority 3: Label (fallback)
-    return label or uri
 
 
 def _resolve_blank_node_range(store: Store, graph_uri: str, property_uri: str) -> list[dict[str, str]]:
@@ -1774,7 +1824,7 @@ async def get_class_hierarchy(ontology_uri: str) -> list[HierarchyNode]:
 
     # Query for OWL/RDFS classes only (not SKOS concepts)
     query = f"""
-    SELECT DISTINCT ?class ?label ?prefixIRI ?parent WHERE {{
+    SELECT DISTINCT ?class ?label ?prefixIRI ?parent ?deprecated WHERE {{
         GRAPH <{ontology_uri}> {{
             # Get OWL and RDFS classes
             {{ ?class a <{OWL_CLASS}> . }}
@@ -1786,6 +1836,9 @@ async def get_class_hierarchy(ontology_uri: str) -> list[HierarchyNode]:
 
             # Get prefixIRI (from BioPortal/OntoPortal metadata)
             OPTIONAL {{ ?class <http://data.bioontology.org/metadata/prefixIRI> ?prefixIRI }}
+
+            # Get owl:deprecated status
+            OPTIONAL {{ ?class <http://www.w3.org/2002/07/owl#deprecated> ?deprecated }}
 
             # Get parent via subClassOf
             OPTIONAL {{
@@ -1826,11 +1879,19 @@ async def get_class_hierarchy(ontology_uri: str) -> list[HierarchyNode]:
     nodes: dict[str, HierarchyNode] = {}
     # Track parent -> children relationships
     children_map: dict[str, list[str]] = {}
+    # Track deprecated classes
+    deprecated_classes: set[str] = set()
 
     for row in class_data:
         class_uri = row.get("class")
         if not class_uri:
             continue
+
+        # Check if deprecated
+        deprecated_val = row.get("deprecated")
+        is_deprecated = str(deprecated_val).lower() == "true" if deprecated_val else False
+        if is_deprecated:
+            deprecated_classes.add(class_uri)
 
         if class_uri not in nodes:
             nodes[class_uri] = HierarchyNode(
@@ -1839,7 +1900,8 @@ async def get_class_hierarchy(ontology_uri: str) -> list[HierarchyNode]:
                 prefix_iri=row.get("prefixIRI"),
                 entity_type="Class",
                 parent_uris=[],
-                is_external=is_external(class_uri)
+                is_external=is_external(class_uri),
+                is_deprecated=is_deprecated
             )
 
         # Add parent if present and not excluded
@@ -1878,8 +1940,13 @@ async def get_class_hierarchy(ontology_uri: str) -> list[HierarchyNode]:
             if has_internal_descendant(uri, set()):
                 node.is_external = False
 
+    # Filter out deprecated classes unless show_deprecated is enabled
+    result_nodes = nodes.values()
+    if not config.show_deprecated:
+        result_nodes = [n for n in result_nodes if not n.is_deprecated]
+
     # Sort nodes by label
-    return sorted(nodes.values(), key=lambda n: n.label.lower())
+    return sorted(result_nodes, key=lambda n: n.label.lower())
 
 
 class CodeListSummary(BaseModel):
