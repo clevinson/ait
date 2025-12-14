@@ -47,6 +47,9 @@ web/node_modules/
 web/.svelte-kit/
 web/build/
 
+# Built frontend symlink (created by `just build-web`)
+src/ait/_static
+
 # Local data
 *.db
 *.sqlite

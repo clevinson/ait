@@ -115,7 +115,6 @@ export interface HierarchyNode {
 	prefix_iri?: string | null;
 	entity_type: string;
 	parent_uris: string[];
-	is_external: boolean;
 	is_deprecated: boolean;
 }
 

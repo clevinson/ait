@@ -85,18 +85,44 @@ Tools: `nvs_sparql`, `nvs_list_collections`, `nvs_list_concept_schemes`, `nvs_co
 
 ## Running the Project
 
+**Prerequisites:** Install [just](https://github.com/casey/just) (`brew install just`)
+
 ```bash
-# Install dependencies
-poetry install
+# Install all dependencies (Python + Node)
+just install
 
-# Check CLI
-poetry run ait --help
+# Show available commands
+just
+```
 
-# Show local store status
-poetry run ait status
+### Development Workflow (hot-reloading)
 
-# Start web UI (FastAPI + SvelteKit dev)
-poetry run ait web  # or: cd web && npm run dev
+Run in two separate terminals:
+```bash
+# Terminal 1: API server
+just dev-server
+
+# Terminal 2: Frontend with hot-reload
+just dev-web
+```
+
+Frontend runs at http://localhost:5173, API at http://localhost:8000
+
+### Production/Integrated Mode
+
+```bash
+# Build frontend and run integrated server
+just serve
+```
+
+Single server at http://localhost:8000 serves both API and frontend.
+
+### Other Commands
+
+```bash
+just build-web   # Build frontend only (creates symlink to src/ait/_static/)
+just check-web   # Run frontend type checking
+just clean       # Remove build artifacts
 ```
 
 ## Claude Code Integration

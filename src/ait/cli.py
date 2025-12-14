@@ -184,17 +184,29 @@ def web(
         "-h",
         help="Host to bind to",
     ),
+    no_frontend: bool = typer.Option(
+        False,
+        "--no-frontend",
+        help="Run API server only (for dev mode with separate frontend)",
+    ),
 ) -> None:
-    """Start the web UI server."""
+    """Start the web UI server.
+
+    By default, serves the bundled frontend from _static/.
+    Use --no-frontend for development with a separate `npm run dev` process.
+    """
     import uvicorn
 
     from ait.web import app as web_app, configure
 
-    configure(data_dir)
+    configure(data_dir, serve_frontend=not no_frontend)
 
     console.print(f"[bold green]ait[/] v{__version__} web UI", style="dim")
     console.print(f"Data directory: {data_dir}", style="dim")
-    console.print(f"Starting web server at http://{host}:{port}", style="dim")
+    if no_frontend:
+        console.print(f"Starting API server at http://{host}:{port} (no frontend)", style="dim")
+    else:
+        console.print(f"Starting web server at http://{host}:{port}", style="dim")
 
     uvicorn.run(web_app, host=host, port=port)
 

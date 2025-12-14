@@ -18,13 +18,10 @@
 		expanded: boolean;
 	}
 
-	let allNodes = $state<HierarchyNode[]>([]);
 	let roots = $state<TreeNode[]>([]);
 	let codeLists = $state<CodeListSummary[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
-	let showExternal = $state(false);
-	let externalCount = $state(0);
 
 	onMount(async () => {
 		await loadData();
@@ -40,9 +37,7 @@
 				getClassHierarchy(ontologyUri),
 				listCodeLists(ontologyUri)
 			]);
-			allNodes = nodes;
-			externalCount = nodes.filter((n) => n.is_external).length;
-			roots = buildTree(showExternal ? nodes : nodes.filter((n) => !n.is_external));
+			roots = buildTree(nodes);
 			codeLists = lists;
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load';
@@ -50,13 +45,6 @@
 			loading = false;
 		}
 	}
-
-	// Rebuild tree when showExternal changes
-	$effect(() => {
-		if (allNodes.length > 0) {
-			roots = buildTree(showExternal ? allNodes : allNodes.filter((n) => !n.is_external));
-		}
-	});
 
 	function buildTree(nodes: HierarchyNode[]): TreeNode[] {
 		// Build lookup maps
@@ -170,15 +158,6 @@
 			</section>
 		{/if}
 
-		<!-- External Classes Toggle -->
-		{#if externalCount > 0}
-			<div class="external-toggle">
-				<label class="toggle-label">
-					<input type="checkbox" bind:checked={showExternal} />
-					<span>Show external classes ({externalCount})</span>
-				</label>
-			</div>
-		{/if}
 	{/if}
 </div>
 
@@ -380,29 +359,4 @@
 		border-radius: var(--radius-sm);
 	}
 
-	/* External classes toggle */
-	.external-toggle {
-		padding: var(--space-3);
-		border-top: 1px solid var(--border);
-		background: var(--bg-subtle);
-	}
-
-	.toggle-label {
-		display: flex;
-		align-items: center;
-		gap: var(--space-2);
-		font-family: var(--font-mono);
-		font-size: var(--text-xs);
-		color: var(--text-tertiary);
-		cursor: pointer;
-	}
-
-	.toggle-label:hover {
-		color: var(--text-secondary);
-	}
-
-	.toggle-label input[type='checkbox'] {
-		margin: 0;
-		cursor: pointer;
-	}
 </style>

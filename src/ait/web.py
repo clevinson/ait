@@ -436,7 +436,6 @@ class HierarchyNode(BaseModel):
     prefix_iri: str | None = None  # prefixIRI for display name computation
     entity_type: str  # Class, ConceptScheme, Concept
     parent_uris: list[str] = []  # All direct superclasses (for multiple inheritance)
-    is_external: bool = False  # True if class is from an external vocabulary
     is_deprecated: bool = False  # True if owl:deprecated true
 
 
@@ -1737,6 +1736,12 @@ EXCLUDED_CLASSES = {
     "http://www.w3.org/2002/07/owl#Class",
 }
 
+# Namespaces that are infrastructure/metadata, not domain content
+# Classes from these namespaces should not appear in the hierarchy
+EXCLUDED_NAMESPACES = {
+    "http://www.geneontology.org/formats/oboInOwl#",  # OBO-to-OWL translation infrastructure
+}
+
 def _extract_namespace(uri: str) -> str:
     """Extract namespace from a URI (everything up to and including last # or /)."""
     hash_idx = uri.rfind("#")
@@ -1810,37 +1815,29 @@ def _detect_internal_namespaces(class_uris: list[str], threshold: float = 0.05) 
 
 @app.get("/api/ontologies/{ontology_uri:path}/hierarchy", response_model=list[HierarchyNode])
 async def get_class_hierarchy(ontology_uri: str) -> list[HierarchyNode]:
-    """Get the full class hierarchy for an ontology.
+    """Get the class hierarchy for an ontology.
 
-    Returns all classes with their direct parent URIs, allowing the frontend
-    to build the tree structure. Handles multiple inheritance by providing
-    all parent URIs for each class.
+    Returns classes from selected namespaces plus all their ancestors.
+    The frontend builds the tree structure from parent_uris.
 
-    External classes (from known external vocabularies) are marked is_external=True
-    only if they have no internal descendants. External classes that are ancestors
-    of internal classes remain visible in the hierarchy.
+    Flow:
+    1. Get classes from selected (ON) namespaces - these are the "leaf" classes
+    2. Walk up the subClassOf hierarchy to find all ancestors
+    3. Return leaf classes + ancestors (ancestors can be from any namespace)
     """
     store = get_store()
 
-    # Query for OWL/RDFS classes only (not SKOS concepts)
+    # Query for all OWL/RDFS classes with their metadata
     query = f"""
     SELECT DISTINCT ?class ?label ?prefixIRI ?parent ?deprecated WHERE {{
         GRAPH <{ontology_uri}> {{
-            # Get OWL and RDFS classes
             {{ ?class a <{OWL_CLASS}> . }}
             UNION
             {{ ?class a <{RDFS_CLASS}> . }}
 
-            # Get label
             OPTIONAL {{ ?class <http://www.w3.org/2000/01/rdf-schema#label> ?label }}
-
-            # Get prefixIRI (from BioPortal/OntoPortal metadata)
             OPTIONAL {{ ?class <http://data.bioontology.org/metadata/prefixIRI> ?prefixIRI }}
-
-            # Get owl:deprecated status
             OPTIONAL {{ ?class <http://www.w3.org/2002/07/owl#deprecated> ?deprecated }}
-
-            # Get parent via subClassOf
             OPTIONAL {{
                 ?class <http://www.w3.org/2000/01/rdf-schema#subClassOf> ?parent .
                 FILTER(isIRI(?parent))
@@ -1850,103 +1847,116 @@ async def get_class_hierarchy(ontology_uri: str) -> list[HierarchyNode]:
     """
     results = store.query(query)
 
-    # First pass: collect all class URIs
-    class_data: list[dict] = []
+    def is_in_excluded_namespace(uri: str) -> bool:
+        """Check if a URI is in an excluded infrastructure namespace."""
+        ns = _extract_namespace(uri)
+        return ns in EXCLUDED_NAMESPACES
+
+    # Build complete class info map (all classes in ontology)
+    # Track has_label separately to filter stub classes later
+    all_classes: dict[str, dict] = {}  # uri -> {label, prefixIRI, deprecated, parents: [], has_label: bool}
     for row in results:
         class_uri = row.get("class")
-        if not class_uri or class_uri.startswith("_:"):
+        if not class_uri or class_uri.startswith("_:") or class_uri in EXCLUDED_CLASSES:
             continue
-        if class_uri in EXCLUDED_CLASSES:
-            continue
-        class_data.append(row)
-
-    # Get stored namespace config, or fall back to auto-detection
-    config = _get_ontology_config(store, ontology_uri)
-    if config.selected_namespaces:
-        # User has configured namespaces - use those
-        internal_namespaces = set(config.selected_namespaces)
-    else:
-        # No config yet - auto-detect for initial display
-        all_class_uris = list({row.get("class") for row in class_data if row.get("class")})
-        internal_namespaces = _detect_internal_namespaces(all_class_uris)
-
-    def is_external(uri: str) -> bool:
-        """Check if a class is from an external namespace."""
-        ns = _extract_namespace(uri)
-        return ns not in internal_namespaces
-
-    # Build a map of class URI -> HierarchyNode
-    nodes: dict[str, HierarchyNode] = {}
-    # Track parent -> children relationships
-    children_map: dict[str, list[str]] = {}
-    # Track deprecated classes
-    deprecated_classes: set[str] = set()
-
-    for row in class_data:
-        class_uri = row.get("class")
-        if not class_uri:
+        if is_in_excluded_namespace(class_uri):
             continue
 
-        # Check if deprecated
-        deprecated_val = row.get("deprecated")
-        is_deprecated = str(deprecated_val).lower() == "true" if deprecated_val else False
-        if is_deprecated:
-            deprecated_classes.add(class_uri)
+        if class_uri not in all_classes:
+            deprecated_val = row.get("deprecated")
+            raw_label = row.get("label")
+            all_classes[class_uri] = {
+                "label": raw_label or _extract_local_name(class_uri),
+                "has_label": raw_label is not None,  # True if class has rdfs:label
+                "prefixIRI": row.get("prefixIRI"),
+                "deprecated": str(deprecated_val).lower() == "true" if deprecated_val else False,
+                "parents": []
+            }
 
-        if class_uri not in nodes:
-            nodes[class_uri] = HierarchyNode(
-                uri=class_uri,
-                label=row.get("label") or _extract_local_name(class_uri),
-                prefix_iri=row.get("prefixIRI"),
-                entity_type="Class",
-                parent_uris=[],
-                is_external=is_external(class_uri),
-                is_deprecated=is_deprecated
-            )
-
-        # Add parent if present and not excluded
         parent = row.get("parent")
         if parent and parent not in EXCLUDED_CLASSES and not parent.startswith("_:"):
-            if parent not in nodes[class_uri].parent_uris:
-                nodes[class_uri].parent_uris.append(parent)
-            # Track children for ancestor traversal
-            if parent not in children_map:
-                children_map[parent] = []
-            if class_uri not in children_map[parent]:
-                children_map[parent].append(class_uri)
+            if parent not in all_classes[class_uri]["parents"]:
+                all_classes[class_uri]["parents"].append(parent)
 
-    # For external classes, check if they have any internal descendants
-    # If so, they should NOT be marked as external (they're useful ancestors)
-    def has_internal_descendant(uri: str, visited: set[str]) -> bool:
-        """Recursively check if a class has any non-external descendants."""
+    # Get namespace config
+    config = _get_ontology_config(store, ontology_uri)
+    if config.selected_namespaces:
+        selected_namespaces = set(config.selected_namespaces)
+    else:
+        # No config yet - auto-detect for initial display
+        all_class_uris = list(all_classes.keys())
+        selected_namespaces = _detect_internal_namespaces(all_class_uris)
+
+    def is_in_selected_namespace(uri: str) -> bool:
+        ns = _extract_namespace(uri)
+        return ns in selected_namespaces
+
+    def is_stub_class(uri: str) -> bool:
+        """Check if a class is a stub (no label and no named parents).
+
+        Stub classes are references imported from other ontologies that only have
+        rdf:type owl:Class but no meaningful content. They shouldn't appear in the tree.
+        """
+        info = all_classes.get(uri)
+        if not info:
+            return True
+        # A class is a stub if it has no label AND no named parents
+        return not info["has_label"] and len(info["parents"]) == 0
+
+    # Find leaf classes (from selected namespaces, excluding stubs)
+    leaf_classes = {
+        uri for uri in all_classes
+        if is_in_selected_namespace(uri) and not is_stub_class(uri)
+    }
+
+    # Walk up ancestor chains to collect all classes we need to show
+    classes_to_include: set[str] = set(leaf_classes)
+
+    def collect_ancestors(uri: str, visited: set[str]) -> None:
+        """Recursively collect all ancestors of a class."""
         if uri in visited:
-            return False
+            return
         visited.add(uri)
 
-        for child_uri in children_map.get(uri, []):
-            child = nodes.get(child_uri)
-            if child:
-                # If child is internal, we found an internal descendant
-                if not is_external(child_uri):
-                    return True
-                # Otherwise, check child's descendants
-                if has_internal_descendant(child_uri, visited):
-                    return True
-        return False
+        class_info = all_classes.get(uri)
+        if not class_info:
+            return
 
-    # Update is_external: only truly orphaned external classes stay marked
-    for uri, node in nodes.items():
-        if node.is_external:
-            if has_internal_descendant(uri, set()):
-                node.is_external = False
+        for parent_uri in class_info["parents"]:
+            if parent_uri not in EXCLUDED_CLASSES:
+                classes_to_include.add(parent_uri)
+                collect_ancestors(parent_uri, visited)
 
-    # Filter out deprecated classes unless show_deprecated is enabled
-    result_nodes = nodes.values()
-    if not config.show_deprecated:
-        result_nodes = [n for n in result_nodes if not n.is_deprecated]
+    # Collect ancestors for all leaf classes
+    for leaf_uri in leaf_classes:
+        collect_ancestors(leaf_uri, set())
 
-    # Sort nodes by label
-    return sorted(result_nodes, key=lambda n: n.label.lower())
+    # Build result nodes (only classes we've decided to include)
+    nodes: list[HierarchyNode] = []
+    for uri in classes_to_include:
+        class_info = all_classes.get(uri)
+        if not class_info:
+            # Parent class exists but wasn't in our query results (shouldn't happen often)
+            continue
+
+        # Skip deprecated unless show_deprecated is enabled
+        if class_info["deprecated"] and not config.show_deprecated:
+            continue
+
+        # Filter parent_uris to only include parents that are also in our included set
+        # (This prevents dangling references to excluded classes)
+        filtered_parents = [p for p in class_info["parents"] if p in classes_to_include or p in EXCLUDED_CLASSES]
+
+        nodes.append(HierarchyNode(
+            uri=uri,
+            label=class_info["label"],
+            prefix_iri=class_info["prefixIRI"],
+            entity_type="Class",
+            parent_uris=filtered_parents,
+            is_deprecated=class_info["deprecated"]
+        ))
+
+    return sorted(nodes, key=lambda n: n.label.lower())
 
 
 class CodeListSummary(BaseModel):
@@ -2036,8 +2046,44 @@ async def list_codelists(ontology_uri: str) -> list[CodeListSummary]:
     return sorted(codelists, key=lambda cl: cl.label.lower())
 
 
-def configure(data_dir: Path) -> None:
-    """Configure the web server."""
+def configure(data_dir: Path, serve_frontend: bool = True) -> None:
+    """Configure the web server.
+
+    Args:
+        data_dir: Directory for local data storage
+        serve_frontend: If True, mount static files from _static/ directory
+    """
     global _data_dir, _store
     _data_dir = data_dir
     _store = None  # Reset store to use new path
+
+    if serve_frontend:
+        # Mount static files from _static/ (symlink to web/build)
+        static_dir = Path(__file__).parent / "_static"
+        if static_dir.exists():
+            from starlette.staticfiles import StaticFiles
+            from starlette.responses import FileResponse
+
+            # Mount static assets (JS, CSS, etc.) at /_app
+            app_dir = static_dir / "_app"
+            if app_dir.exists():
+                app.mount("/_app", StaticFiles(directory=app_dir), name="static_app")
+
+            # Serve index.html for all non-API routes (SPA fallback)
+            @app.get("/{path:path}")
+            async def serve_spa(path: str):
+                # Don't intercept API or MCP routes
+                if path.startswith("api/") or path.startswith("mcp"):
+                    raise HTTPException(status_code=404)
+                # Serve index.html for SPA routing
+                index_file = static_dir / "index.html"
+                if index_file.exists():
+                    return FileResponse(index_file)
+                raise HTTPException(status_code=404, detail="Frontend not built. Run: just build-web")
+
+            @app.get("/")
+            async def serve_root():
+                index_file = static_dir / "index.html"
+                if index_file.exists():
+                    return FileResponse(index_file)
+                raise HTTPException(status_code=404, detail="Frontend not built. Run: just build-web")
